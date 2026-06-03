@@ -1,4 +1,8 @@
-"""Phase 2 — prompt-injection hardening of the gate evaluators (no network)."""
+"""Prompt-injection hardening of the gate evaluators (no network).
+
+The gates defend against injection by keeping instructions in the system role and
+wrapping attacker-controlled text as nonce-delimited untrusted data.
+"""
 from __future__ import annotations
 
 from fakes import FakeLLMProvider
@@ -7,7 +11,7 @@ from cognitive_firewall import prompts
 from cognitive_firewall.config import FirewallConfig
 from cognitive_firewall.gates import IntentGate
 from cognitive_firewall.gates.base import GateInput
-from cognitive_firewall.types import GateLabel, RiskCategory, Turn
+from cognitive_firewall.types import Turn
 
 CFG = FirewallConfig()
 INJECTION = (
@@ -18,16 +22,6 @@ INJECTION = (
 
 def _gi(text):
     return GateInput(turns=[Turn(role="user", content=text)])
-
-
-def test_injection_clamp_overrides_a_fooled_gate():
-    # Even if the model is tricked into returning SAFE/0.0, the injection
-    # pre-screen clamps the input gate to SUSPICIOUS and tags INJECTION.
-    prov = FakeLLMProvider(by_gate={"G1": {"label": "SAFE", "score": 0.0}})
-    res = IntentGate(CFG).evaluate(_gi(INJECTION), prov)
-    assert res.score >= 0.5
-    assert res.label is GateLabel.SUSPICIOUS
-    assert RiskCategory.INJECTION in res.categories
 
 
 def test_untrusted_content_is_wrapped_and_role_separated():

@@ -102,10 +102,10 @@ def main():
 
     with st.sidebar:
         st.header("Configuration")
-        backends = ["heuristic", "auto", "local", "openai"]
+        backends = ["auto", "local", "openai"]
         default_idx = backends.index("openai") if api_key_from_env() else 0
         backend = st.selectbox("Backend", backends, index=default_idx,
-                               help="heuristic = offline (no key/GPU); local = vLLM; openai = gpt-4o-mini API")
+                               help="auto = local vLLM if reachable, else API; local = vLLM; openai = gpt-4o-mini API")
         dry_run = st.toggle("Dry-run (observe-only)", value=False,
                             help="Compute decisions but never suppress output.")
         fw = get_firewall(backend, dry_run)

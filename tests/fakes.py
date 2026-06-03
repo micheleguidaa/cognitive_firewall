@@ -12,7 +12,6 @@ class FakeLLMProvider(Provider):
     ``captured`` collects every ``chat_json`` message list for inspection.
     """
 
-    supports_llm = True
     mode_name = "fake"
 
     def __init__(
@@ -23,6 +22,7 @@ class FakeLLMProvider(Provider):
         chat_text="Benign simulated answer.",
         moderate_ret=None,
         captured=None,
+        route=None,
     ):
         self.by_gate = by_gate or {}
         self.raise_on = set(raise_on or ())
@@ -30,6 +30,9 @@ class FakeLLMProvider(Provider):
         self.chat_text = chat_text
         self.moderate_ret = moderate_ret
         self.captured = captured if captured is not None else []
+        # Optional content router: route(gate_id, user_text) -> dict | None.
+        # Lets one provider return different verdicts per request (e.g. API tests).
+        self.route = route
 
     @staticmethod
     def _gate_of(messages) -> str | None:
@@ -47,6 +50,11 @@ class FakeLLMProvider(Provider):
         gid = self._gate_of(messages)
         if gid in self.raise_on:
             raise ProviderError(f"simulated failure for {gid}")
+        if self.route is not None:
+            user_text = messages[1].get("content", "") if len(messages) > 1 else ""
+            routed = self.route(gid, user_text)
+            if routed is not None:
+                return routed
         target = self.by_gate.get(gid, self.default)
         if isinstance(target, Exception):
             raise target

@@ -1,6 +1,5 @@
-# Core + evaluation. The offline demo, the heuristic backend, and the full test
-# suite run with ONLY the standard library — these are needed for the real-model
-# backend (openai), the API/UI, and the eval harness.
+# Core + evaluation. Every gate runs on a real model, so `openai` (the
+# OpenAI-compatible client) is required; the rest power the API/UI and eval harness.
 #
 # Freeze exact versions for the paper with:  pip freeze > requirements.lock.txt
 openai>=1.40

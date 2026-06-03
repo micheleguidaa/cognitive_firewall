@@ -32,8 +32,6 @@ def probe_endpoint(base_url: str, timeout: float = 1.0) -> bool:
 
 
 class OpenAICompatProvider(Provider):
-    supports_llm = True
-
     def __init__(self, base_url: str, model: str, api_key: Optional[str], cfg=None):
         try:
             from openai import OpenAI

@@ -4,8 +4,6 @@ A provider exposes three capabilities:
   * ``chat``       — free-form generation for the governed main LLM.
   * ``chat_json``  — a temperature-0 call that returns a parsed JSON dict (gates).
   * ``moderate``   — optional category->score dict, or None if unavailable.
-
-``supports_llm`` tells a gate whether to take its LLM path or its heuristic path.
 """
 from __future__ import annotations
 
@@ -51,7 +49,6 @@ def extract_json(text: str) -> dict:
 class Provider:
     """Base provider. Subclasses override the methods they support."""
 
-    supports_llm: bool = False
     mode_name: str = "base"
 
     def chat(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.7) -> str:
@@ -69,10 +66,3 @@ class Provider:
 
     def moderate(self, text: str) -> Optional[dict]:
         return None
-
-
-def last_user_message(messages: list[dict]) -> str:
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            return str(m.get("content", ""))
-    return str(messages[-1].get("content", "")) if messages else ""

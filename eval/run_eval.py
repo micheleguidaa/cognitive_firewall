@@ -1,9 +1,6 @@
 """Evaluation orchestrator.
 
-    # offline (heuristic) smoke
-    python -m eval.run_eval --backend heuristic
-
-    # Phase 5 — real models (gates+main on OpenAI, LLM judge, moderation guard)
+    # Real models (gates+main on OpenAI, LLM judge, moderation guard)
     OPENAI_API_KEY=... python -m eval.run_eval --backend openai \
         --model gpt-4o-mini --main-model gpt-4o-mini \
         --judge llm --guards openai_moderation --parallel 8
@@ -28,7 +25,7 @@ from cognitive_firewall.types import Decision
 
 from . import datasets
 from .guards import LlamaGuardGuard, OpenAIModerationGuard
-from .judge import HeuristicJudge, LLMJudge
+from .judge import LLMJudge
 from .metrics import (
     EvalRecord,
     asr_at_matched_overrefusal,
@@ -274,18 +271,18 @@ def _write_summary(report, outdir: Path, dataset_desc, provider_mode, judge_name
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Cognitive Firewall evaluation harness")
-    ap.add_argument("--backend", default=None, help="auto|local|openai|heuristic")
+    ap.add_argument("--backend", default=None, help="auto|local|openai")
     ap.add_argument("--model", default=None, help="gate-judge model override")
     ap.add_argument("--main-model", default=None, help="governed main-LLM model override")
     ap.add_argument("--base-url", default=None, help="OpenAI-compatible base_url override (gates)")
-    ap.add_argument("--main-backend", default=None, choices=["openai", "local", "heuristic"],
+    ap.add_argument("--main-backend", default=None, choices=["openai", "local"],
                     help="separate provider for the governed main LLM (e.g. local vLLM/Ollama)")
     ap.add_argument("--main-base-url", default=None, help="base_url for the main-LLM provider")
     ap.add_argument("--datasets", nargs="*", default=None, help="filter by source name(s)")
     ap.add_argument("--attack-types", nargs="*", default=None)
     ap.add_argument("--max-samples", type=int, default=None, help="cap per label")
     ap.add_argument("--full", action="store_true")
-    ap.add_argument("--judge", choices=["heuristic", "llm"], default="heuristic")
+    ap.add_argument("--judge", choices=["llm"], default="llm")
     ap.add_argument("--guards", nargs="*", default=[], choices=list(_GUARD_REGISTRY))
     ap.add_argument("--parallel", type=int, default=1, help="sample-level concurrency")
     ap.add_argument("--out", default="results")
@@ -311,7 +308,7 @@ def main(argv=None) -> int:
                        model=mm, main_model=mm)
         main_provider = make_provider(mcfg)
     fw = CognitiveFirewall(cfg, provider=provider, main_provider=main_provider)
-    judge = LLMJudge(provider) if args.judge == "llm" else HeuristicJudge()
+    judge = LLMJudge(provider)
     guards = [_GUARD_REGISTRY[n](provider) for n in args.guards]
 
     samples = datasets.load(sources=args.datasets, attack_types=args.attack_types,
