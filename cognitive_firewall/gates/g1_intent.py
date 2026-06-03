@@ -6,7 +6,7 @@ are noted as framing applied over a harmful core.
 """
 from __future__ import annotations
 
-from .. import lexicons
+from .. import lexicons, prompts
 from ..types import GateLabel, GateResult
 from .base import Gate, GateInput
 
@@ -15,6 +15,15 @@ class IntentGate(Gate):
     gate_id = "G1"
     name = "Intent"
     screens_injection = True
+
+    system_prompt = prompts.G1_INTENT_SYSTEM
+    analyze_kind = "USER_REQUEST"
+    _LABELS = {
+        "SAFE": (GateLabel.SAFE, 0.0),
+        "SUSPICIOUS": (GateLabel.SUSPICIOUS, 0.5),
+        "UNSAFE": (GateLabel.UNSAFE, 1.0),
+    }
+    _BANDS = ((0.75, GateLabel.UNSAFE), (0.34, GateLabel.SUSPICIOUS), (0.0, GateLabel.SAFE))
 
     def _evaluate_heuristic(self, gi: GateInput) -> GateResult:
         text = gi.last_user

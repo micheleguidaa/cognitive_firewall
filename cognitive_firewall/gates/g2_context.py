@@ -7,11 +7,11 @@ UNVERIFIABLE; absence of claims is PLAUSIBLE.
 """
 from __future__ import annotations
 
-from .. import lexicons
+from .. import lexicons, prompts
 from ..types import GateLabel, GateResult
 from .base import Gate, GateInput
 
-_LABELS = {
+_HEUR_LABELS = {
     "MANIPULATIVE": GateLabel.MANIPULATIVE,
     "UNVERIFIABLE": GateLabel.UNVERIFIABLE,
     "PLAUSIBLE": GateLabel.PLAUSIBLE,
@@ -23,10 +23,22 @@ class ContextGate(Gate):
     name = "Context"
     screens_injection = True
 
+    system_prompt = prompts.G2_CONTEXT_SYSTEM
+    analyze_kind = "USER_CONTEXT"
+    _LABELS = {
+        "PLAUSIBLE": (GateLabel.PLAUSIBLE, 0.0),
+        "UNVERIFIABLE": (GateLabel.UNVERIFIABLE, 0.5),
+        "MANIPULATIVE": (GateLabel.MANIPULATIVE, 1.0),
+    }
+    _BANDS = ((0.75, GateLabel.MANIPULATIVE), (0.34, GateLabel.UNVERIFIABLE), (0.0, GateLabel.PLAUSIBLE))
+
+    def _llm_content(self, gi: GateInput) -> str:
+        return gi.all_user_text
+
     def _evaluate_heuristic(self, gi: GateInput) -> GateResult:
         # Claims may appear in any user turn, so scan the whole user side.
         label_str, score, evidence, categories = lexicons.role_claims(gi.all_user_text)
-        label = _LABELS[label_str]
+        label = _HEUR_LABELS[label_str]
 
         if label is GateLabel.MANIPULATIVE:
             rationale = (

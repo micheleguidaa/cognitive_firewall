@@ -11,13 +11,15 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Optional
 
-from .. import lexicons
+from .. import lexicons, prompts
 from ..config import FirewallConfig
 from ..providers.base import ProviderError
 from ..types import GateLabel, GateResult, RiskCategory, Turn
 
 # Gate-error -> risk score, by fail policy.
 _FAIL_SCORE = {"closed": 1.0, "flag": 0.5, "open": 0.0}
+
+_CATEGORY_BY_VALUE = {c.value: c for c in RiskCategory}
 
 
 @dataclass
@@ -49,6 +51,12 @@ class Gate:
     name: str = "gate"
     screens_injection: bool = False  # input gates (G1, G2) get the injection clamp
 
+    # --- LLM-path configuration (overridden by concrete gates) ---
+    system_prompt: str = ""
+    analyze_kind: str = "USER_INPUT"
+    _LABELS: dict = {}          # label string -> (GateLabel, canonical score)
+    _BANDS: tuple = ()          # (min_score, GateLabel), highest threshold first
+
     def __init__(self, cfg: FirewallConfig):
         self.cfg = cfg
 
@@ -73,10 +81,80 @@ class Gate:
     def _evaluate_heuristic(self, gi: GateInput) -> GateResult:
         raise NotImplementedError
 
+    def _llm_content(self, gi: GateInput) -> str:
+        """The attacker-controlled text this gate analyzes (wrapped untrusted)."""
+        return gi.last_user
+
     def _evaluate_llm(self, gi: GateInput, provider) -> GateResult:
-        # Implemented in Phase 2. Until then the heuristic path is used (the
-        # offline provider reports supports_llm=False, so this is never hit there).
-        raise NotImplementedError("LLM gate path is implemented in Phase 2")
+        """Generic LLM path: instructions in the system role, untrusted content
+        nonce-wrapped in the user role, fixed JSON schema back."""
+        nonce = prompts.make_nonce()
+        wrapped = prompts.wrap_untrusted(self._llm_content(gi), nonce, self.analyze_kind)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": wrapped},
+        ]
+        data = provider.chat_json(
+            messages,
+            max_tokens=self.cfg.gate_max_tokens,
+            temperature=self.cfg.gate_temperature,
+        )
+        return self._result_from_json(data)
+
+    def _result_from_json(self, data: dict, mode: str = "llm") -> GateResult:
+        label_str = str(data.get("label", "")).strip().upper()
+
+        raw_score = data.get("score", None)
+        score = None
+        if isinstance(raw_score, (int, float)):
+            score = float(raw_score)
+        elif isinstance(raw_score, str):
+            try:
+                score = float(raw_score)
+            except ValueError:
+                score = None
+        if score is None and label_str in self._LABELS:
+            score = self._LABELS[label_str][1]
+        score = max(0.0, min(1.0, score if score is not None else 0.0))
+
+        if label_str in self._LABELS:
+            label = self._LABELS[label_str][0]
+        else:
+            label = self._score_to_label(score)
+
+        rationale = str(data.get("rationale", ""))[:600]
+        ev = data.get("evidence", [])
+        evidence = [str(x)[:160] for x in ev][:6] if isinstance(ev, list) else []
+        categories = self._parse_categories(data.get("categories", []))
+
+        return GateResult(
+            gate_id=self.gate_id,
+            name=self.name,
+            score=score,
+            label=label,
+            rationale=rationale,
+            evidence=evidence,
+            categories=categories,
+            mode=mode,
+            raw=data,
+        )
+
+    def _score_to_label(self, score: float) -> GateLabel:
+        for threshold, enum in self._BANDS:
+            if score >= threshold:
+                return enum
+        return self._BANDS[-1][1] if self._BANDS else GateLabel.LOW
+
+    @staticmethod
+    def _parse_categories(raw) -> list:
+        if not isinstance(raw, list):
+            return []
+        out: list = []
+        for x in raw:
+            c = _CATEGORY_BY_VALUE.get(str(x).strip().lower())
+            if c is not None and c is not RiskCategory.NONE and c not in out:
+                out.append(c)
+        return out
 
     # -- helpers --------------------------------------------------------------
     def _fail(self, msg: str) -> GateResult:

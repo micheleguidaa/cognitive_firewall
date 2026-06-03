@@ -122,20 +122,23 @@ class CognitiveFirewall:
 
     def _finalize(self, turns, gates, verdict, pregen, main_output, t0) -> FirewallResult:
         decision = verdict.decision
-        # Fail-mode floor: a post-gen gate error under 'flag' must not silently ALLOW.
-        if (
-            self.cfg.fail_mode == "flag"
-            and not self.cfg.dry_run
-            and decision == Decision.ALLOW
-            and any(g.error for g in gates)
-        ):
-            decision = Decision.FLAG
+        # Fail policy: a gate error must never silently ALLOW.
+        errored = any(g.error for g in gates)
+        fail_floor: Optional[str] = None
+        if errored and not self.cfg.dry_run:
+            if self.cfg.fail_mode == "closed":
+                decision = Decision.BLOCK
+                fail_floor = "gate failure under fail_mode=closed"
+            elif self.cfg.fail_mode == "flag" and decision == Decision.ALLOW:
+                decision = Decision.FLAG
 
         refusal_reason: Optional[str] = None
         if decision == Decision.BLOCK:
             returned = self.cfg.safe_refusal
-            refusal_reason = "; ".join(verdict.veto_reasons) or (
-                f"composite risk {verdict.risk_score:.2f} >= {self.cfg.block_threshold:.2f}"
+            refusal_reason = (
+                fail_floor
+                or "; ".join(verdict.veto_reasons)
+                or f"composite risk {verdict.risk_score:.2f} >= {self.cfg.block_threshold:.2f}"
             )
         else:
             returned = main_output
