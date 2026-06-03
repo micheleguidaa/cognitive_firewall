@@ -47,9 +47,17 @@ def _parallel(tasks: list[Callable]):
 
 
 class CognitiveFirewall:
-    def __init__(self, cfg: Optional[FirewallConfig] = None, provider=None):
+    def __init__(self, cfg: Optional[FirewallConfig] = None, provider=None, main_provider=None):
         self.cfg = cfg or FirewallConfig.from_env()
+        # gate/judge provider (the oversight) vs the governed main-LLM provider.
+        # They can differ, e.g. strong gates on an API + a jailbreakable local main.
         self.provider = provider if provider is not None else make_provider(self.cfg)
+        self.main_provider = main_provider if main_provider is not None else self.provider
+        self.mode_label = (
+            self.provider.mode_name
+            if self.main_provider is self.provider
+            else f"{self.provider.mode_name}+main={self.main_provider.mode_name}"
+        )
         self.g1 = IntentGate(self.cfg)
         self.g2 = ContextGate(self.cfg)
         self.g3 = OutputGate(self.cfg)
@@ -92,7 +100,7 @@ class CognitiveFirewall:
     # -- internals ------------------------------------------------------------
     def _generate(self, gi: GateInput) -> str:
         try:
-            return self.provider.chat(
+            return self.main_provider.chat(
                 gi.as_messages(),
                 max_tokens=self.cfg.main_max_tokens,
                 temperature=self.cfg.main_temperature,
@@ -116,7 +124,7 @@ class CognitiveFirewall:
             returned_output=self.cfg.safe_refusal,
             refusal_reason="; ".join(reasons),
             dry_run=self.cfg.dry_run,
-            provider_mode=self.provider.mode_name,
+            provider_mode=self.mode_label,
             total_latency_ms=(perf_counter() - t0) * 1000.0,
         )
 
@@ -156,7 +164,7 @@ class CognitiveFirewall:
             returned_output=returned,
             refusal_reason=refusal_reason,
             dry_run=self.cfg.dry_run,
-            provider_mode=self.provider.mode_name,
+            provider_mode=self.mode_label,
             total_latency_ms=(perf_counter() - t0) * 1000.0,
         )
 
@@ -174,6 +182,6 @@ class CognitiveFirewall:
             returned_output="",
             refusal_reason=None,
             dry_run=self.cfg.dry_run,
-            provider_mode=self.provider.mode_name,
+            provider_mode=self.mode_label,
             total_latency_ms=(perf_counter() - t0) * 1000.0,
         )

@@ -19,6 +19,7 @@ import argparse
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 from cognitive_firewall.config import FirewallConfig, make_provider
@@ -276,7 +277,10 @@ def main(argv=None) -> int:
     ap.add_argument("--backend", default=None, help="auto|local|openai|heuristic")
     ap.add_argument("--model", default=None, help="gate-judge model override")
     ap.add_argument("--main-model", default=None, help="governed main-LLM model override")
-    ap.add_argument("--base-url", default=None, help="OpenAI-compatible base_url override")
+    ap.add_argument("--base-url", default=None, help="OpenAI-compatible base_url override (gates)")
+    ap.add_argument("--main-backend", default=None, choices=["openai", "local", "heuristic"],
+                    help="separate provider for the governed main LLM (e.g. local vLLM/Ollama)")
+    ap.add_argument("--main-base-url", default=None, help="base_url for the main-LLM provider")
     ap.add_argument("--datasets", nargs="*", default=None, help="filter by source name(s)")
     ap.add_argument("--attack-types", nargs="*", default=None)
     ap.add_argument("--max-samples", type=int, default=None, help="cap per label")
@@ -300,14 +304,20 @@ def main(argv=None) -> int:
     cfg.dry_run = True  # scoring pass: full pipeline, no enforcement, output passed through
 
     provider = make_provider(cfg)
-    fw = CognitiveFirewall(cfg, provider=provider)
+    main_provider = None
+    if args.main_backend:
+        mm = args.main_model or cfg.model
+        mcfg = replace(cfg, backend=args.main_backend, base_url=args.main_base_url or cfg.base_url,
+                       model=mm, main_model=mm)
+        main_provider = make_provider(mcfg)
+    fw = CognitiveFirewall(cfg, provider=provider, main_provider=main_provider)
     judge = LLMJudge(provider) if args.judge == "llm" else HeuristicJudge()
     guards = [_GUARD_REGISTRY[n](provider) for n in args.guards]
 
     samples = datasets.load(sources=args.datasets, attack_types=args.attack_types,
                             full=args.full, max_samples=args.max_samples)
     desc = datasets.summarize(samples)
-    print(f"[eval] backend={provider.mode_name} | judge={judge.name} | "
+    print(f"[eval] backend={fw.mode_label} | judge={judge.name} | "
           f"guards={args.guards or 'none'} | parallel={args.parallel}\n[eval] {desc}")
 
     t0 = time.perf_counter()
