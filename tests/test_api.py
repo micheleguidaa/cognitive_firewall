@@ -1,11 +1,36 @@
-"""Phase 4 — FastAPI service (offline heuristic backend)."""
+"""FastAPI service tests (no network).
+
+The app builds its provider once at import, so we patch ``make_provider`` to a
+content-routing FakeLLMProvider before importing the app.
+"""
 from __future__ import annotations
 
-import os
-
-os.environ.setdefault("CF_BACKEND", "heuristic")  # before importing the app
-
 import pytest
+from fakes import FakeLLMProvider
+
+import cognitive_firewall.config as config
+
+
+def _route(gid, text):
+    """Map request content to scripted gate verdicts for the API tests."""
+    t = text.lower()
+    if "ignore" in t and ("safety" in t or "rules" in t):
+        if gid == "G1":
+            return {"label": "SUSPICIOUS", "score": 0.5}
+        if gid == "G2":
+            return {"label": "MANIPULATIVE", "score": 1.0}
+    if "pipe bomb" in t or "sarin" in t:
+        if gid == "G1":
+            return {"label": "UNSAFE", "score": 1.0, "categories": ["weapons"]}
+    if "phishing" in t:
+        if gid == "G1":
+            return {"label": "SUSPICIOUS", "score": 0.5, "categories": ["fraud"]}
+        if gid == "G4":
+            return {"label": "HIGH", "score": 0.9, "rationale": "crescendo"}
+    return None
+
+
+config.make_provider = lambda cfg: FakeLLMProvider(route=_route)
 
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
@@ -19,7 +44,7 @@ def test_health():
     r = client.get("/health")
     assert r.status_code == 200
     body = r.json()
-    assert body["provider_mode"] == "heuristic"
+    assert body["provider_mode"] == "fake"
     assert body["weights"]["G1"] == 0.40
 
 

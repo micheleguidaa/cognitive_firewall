@@ -52,7 +52,7 @@ class FirewallConfig:
     fail_mode: str = "flag"                  # "closed" | "flag" | "open" (see gates/base)
 
     # --- Provider / backend ---
-    backend: str = "auto"                    # "auto" | "local" | "openai" | "heuristic"
+    backend: str = "auto"                    # "auto" | "local" | "openai"
     base_url: str = "http://localhost:8000/v1"   # local vLLM OpenAI-compatible endpoint
     model: str = "Qwen2.5-7B-Instruct"       # gate-judge model
     main_model: Optional[str] = None         # governed main LLM (defaults to `model`)
@@ -106,50 +106,37 @@ def api_key_from_env() -> Optional[str]:
 
 
 def make_provider(cfg: FirewallConfig):
-    """Select a provider for ``cfg`` without ever persisting secrets.
+    """Select an OpenAI-compatible provider for ``cfg`` without persisting secrets.
 
-    Providers are imported lazily so the core package (and Phase-0 tests) don't
-    require the `openai` SDK. The ``auto`` backend prefers a reachable local
-    vLLM endpoint, then an API key, then the offline heuristic provider.
+    The ``auto`` backend prefers a reachable local vLLM endpoint, then an API key.
+    If neither is available it raises, since every gate now requires a real model.
     """
+    from .providers.base import ProviderError
+    from .providers.openai_compat import OpenAICompatProvider, probe_endpoint
+
     backend = (cfg.backend or "auto").lower()
-
-    if backend == "heuristic":
-        from .providers.heuristic import HeuristicProvider
-
-        return HeuristicProvider()
-
     key = api_key_from_env()
 
     if backend == "openai":
-        from .providers.openai_compat import OpenAICompatProvider
-
         return OpenAICompatProvider(
             base_url="https://api.openai.com/v1", model=cfg.model, api_key=key, cfg=cfg
         )
 
     if backend == "local":
-        from .providers.openai_compat import OpenAICompatProvider
-
         return OpenAICompatProvider(
             base_url=cfg.base_url, model=cfg.model, api_key=key or "EMPTY", cfg=cfg
         )
 
-    # auto: local vLLM if reachable -> API key if present -> heuristic
-    try:
-        from .providers.openai_compat import OpenAICompatProvider, probe_endpoint
-
-        if probe_endpoint(cfg.base_url, timeout=1.0):
-            return OpenAICompatProvider(
-                base_url=cfg.base_url, model=cfg.model, api_key=key or "EMPTY", cfg=cfg
-            )
-        if key:
-            return OpenAICompatProvider(
-                base_url="https://api.openai.com/v1", model=cfg.model, api_key=key, cfg=cfg
-            )
-    except Exception:
-        pass
-
-    from .providers.heuristic import HeuristicProvider
-
-    return HeuristicProvider()
+    # auto: local vLLM if reachable -> API key if present -> error
+    if probe_endpoint(cfg.base_url, timeout=1.0):
+        return OpenAICompatProvider(
+            base_url=cfg.base_url, model=cfg.model, api_key=key or "EMPTY", cfg=cfg
+        )
+    if key:
+        return OpenAICompatProvider(
+            base_url="https://api.openai.com/v1", model=cfg.model, api_key=key, cfg=cfg
+        )
+    raise ProviderError(
+        "no LLM backend available: set CF_BACKEND=openai with an API key, or run a "
+        "local vLLM endpoint (CF_BACKEND=local). The heuristic backend has been removed."
+    )
