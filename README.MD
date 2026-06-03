@@ -106,9 +106,12 @@ and a prompt-injection set; `--full` attempts the real datasets from Hugging Fac
   OpenAI Moderation guard baseline) — see `results/summary.md`. The firewall holds
   0% ASR at **0% over-refusal** while the moderation filter over-refuses 12.5% of
   benign prompts; full composite AUROC 1.0 vs output-moderation-only 0.58.
+  Real `--full` HF loaders are now live (AdvBench/HarmBench/StrongREJECT via their
+  public CSVs; JailbreakBench/XSTest/OR-Bench/prompt-injections/Alpaca via HF — all
+  unauthenticated; Crescendo/MHJ stay bundled, no clean public multi-turn source).
   *Remaining for the definitive paper run:* a **jailbreakable** open main model on
-  the H200 (`--backend local`) + Llama Guard 3 baseline + `--full` datasets, to
-  de-saturate metrics and show the large ASR↓ headline.
+  the H200 (`--backend local`) + the Llama Guard 3 baseline, to de-saturate the
+  metrics and show the large ASR↓ headline.
 
 ### Reproduce the real-model run
 ```bash

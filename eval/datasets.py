@@ -82,32 +82,167 @@ def load_bundled(sources=None, attack_types=None, max_samples=None) -> list[Eval
     return samples
 
 
-# Best-effort full-dataset loaders (HF). Each returns a list of EvalSample or
-# raises; load() catches and falls back to the bundled sample for that source.
-def _load_full_source(source: str, max_samples: Optional[int]) -> list[EvalSample]:
-    from datasets import load_dataset  # noqa: F401 — imported lazily
+# ---------------------------------------------------------------------------
+# Full-dataset loaders (Hugging Face). Each ``source`` maps to one or more
+# candidate specs (repo / config / split / columns); the first that yields rows
+# wins. Anything that fails (missing dataset, gated repo, schema drift, no
+# network) raises and load() falls back to the bundled sample for that source.
+# ---------------------------------------------------------------------------
 
-    raise NotImplementedError(
-        f"full loader for '{source}' is not wired yet; using bundled sample. "
-        "Add it in eval/datasets.py::_load_full_source for paper-scale runs."
-    )
+DEFAULT_FULL_CAP = 150  # per-source cap when --max-samples is not given
+
+
+def _pick(ex: dict, keys) -> Optional[str]:
+    for k in keys:
+        v = ex.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _iter_dataset(repo, config, split, cap):
+    """Yield up to ``cap`` examples, preferring streaming (no full download)."""
+    from datasets import load_dataset
+
+    try:
+        ds = load_dataset(repo, config, split=split, streaming=True)
+        it = iter(ds)
+    except Exception:
+        ds = load_dataset(repo, config, split=f"{split}[:{cap}]")
+        it = iter(ds)
+    n = 0
+    for ex in it:
+        if n >= cap:
+            break
+        yield ex
+        n += 1
+
+
+def _iter_csv_url(url, cap):
+    """Yield up to ``cap`` rows from a public CSV (canonical benchmark sources)."""
+    import csv
+    import io
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "cognitive-firewall-eval"})
+    with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310
+        text = r.read().decode("utf-8", errors="replace")
+    for i, row in enumerate(csv.DictReader(io.StringIO(text))):
+        if i >= cap:
+            break
+        yield row
+
+
+def _rows(spec, cap):
+    if spec.get("kind") == "csv_url":
+        return _iter_csv_url(spec["url"], cap)
+    return _iter_dataset(spec["repo"], spec.get("config"), spec["split"], cap)
+
+
+# Per-source candidate specs. `keep` filters rows; `cat` overrides category.
+_FULL_SPECS: dict = {
+    "advbench": [
+        {"kind": "csv_url",
+         "url": "https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv",
+         "prompt": ["goal", "prompt"], "label": "harmful", "attack_type": "direct", "category": "unknown"},
+        {"repo": "walledai/AdvBench", "split": "train", "prompt": ["prompt", "goal"],
+         "label": "harmful", "attack_type": "direct", "category": "unknown"},
+    ],
+    "harmbench": [
+        {"kind": "csv_url",
+         "url": "https://raw.githubusercontent.com/centerforaisafety/HarmBench/main/data/behavior_datasets/harmbench_behaviors_text_all.csv",
+         "prompt": ["Behavior"], "label": "harmful", "attack_type": "direct",
+         "cat_key": "SemanticCategory", "category": "unknown"},
+        {"repo": "walledai/HarmBench", "config": "standard", "split": "train",
+         "prompt": ["prompt", "behavior"], "label": "harmful", "attack_type": "direct",
+         "cat_key": "category", "category": "unknown"},
+    ],
+    "strongreject": [
+        {"kind": "csv_url",
+         "url": "https://raw.githubusercontent.com/alexandrasouly/strongreject/main/strongreject_dataset/strongreject_dataset.csv",
+         "prompt": ["forbidden_prompt"], "label": "harmful", "attack_type": "direct",
+         "cat_key": "category", "category": "unknown"},
+    ],
+    "jailbreakbench": [
+        {"repo": "JailbreakBench/JBB-Behaviors", "config": "behaviors", "split": "harmful",
+         "prompt": ["Goal", "goal"], "label": "harmful", "attack_type": "direct",
+         "cat_key": "Category", "category": "unknown"},
+    ],
+    "xstest": [
+        {"repo": "walledai/XSTest", "split": "test", "prompt": ["prompt"],
+         "label": "benign", "attack_type": "benign_sensitive", "cat_key": "type", "category": "none",
+         "keep": lambda ex: str(ex.get("label", "safe")).lower() in ("safe", "")},
+        {"repo": "natolambert/xstest-v2-copy", "config": "default", "split": "gpt4",
+         "prompt": ["prompt"], "label": "benign", "attack_type": "benign_sensitive", "category": "none",
+         "keep": lambda ex: "contrast" not in str(ex.get("type", "")).lower()},
+    ],
+    "orbench": [
+        {"repo": "bench-llm/or-bench", "config": "or-bench-hard-1k", "split": "train",
+         "prompt": ["prompt"], "label": "benign", "attack_type": "benign_sensitive",
+         "cat_key": "category", "category": "none"},
+    ],
+    "injection": [
+        {"repo": "deepset/prompt-injections", "split": "train", "prompt": ["text"],
+         "label": "harmful", "attack_type": "injection", "category": "injection",
+         "keep": lambda ex: int(ex.get("label", 1)) == 1},
+    ],
+    "alpaca": [
+        {"repo": "tatsu-lab/alpaca", "split": "train", "prompt": ["instruction"],
+         "label": "benign", "attack_type": "benign", "category": "none",
+         "keep": lambda ex: not str(ex.get("input", "")).strip()},
+    ],
+}
+
+
+def _load_full_source(source: str, max_samples: Optional[int]) -> list[EvalSample]:
+    specs = _FULL_SPECS.get(source)
+    if not specs:
+        raise NotImplementedError(f"no full loader for '{source}'")
+    cap = max_samples or DEFAULT_FULL_CAP
+    last_err: Optional[Exception] = None
+    for spec in specs:
+        try:
+            keep = spec.get("keep")
+            out: list[EvalSample] = []
+            for ex in _rows(spec, cap * 8):  # over-scan so `keep` filters can still fill `cap`
+                if keep and not keep(ex):
+                    continue
+                prompt = _pick(ex, spec["prompt"])
+                if not prompt:
+                    continue
+                cat = spec["category"]
+                if spec.get("cat_key") and ex.get(spec["cat_key"]):
+                    cat = str(ex[spec["cat_key"]])
+                out.append(EvalSample(
+                    id=f"{source}-{len(out):04d}", label=spec["label"], category=cat,
+                    source=source, attack_type=spec["attack_type"], prompt=prompt,
+                ))
+                if len(out) >= cap:
+                    break
+            if out:
+                return out
+            last_err = RuntimeError("0 rows after filtering")
+        except Exception as e:  # noqa: BLE001 — try the next candidate spec
+            last_err = e
+    raise RuntimeError(f"all candidate specs failed for '{source}': {last_err}")
 
 
 def load(sources=None, attack_types=None, full=False, max_samples=None) -> list[EvalSample]:
     if not full:
         return load_bundled(sources, attack_types, max_samples)
-    # Full mode: try HF per source, fall back to bundled on any failure.
-    bundled = load_bundled(sources, attack_types, max_samples)
+    # Full mode: discover ALL sources from the (uncapped) bundled set, then upgrade
+    # each to its real dataset. max_samples is the per-source cap, not a discovery limit.
+    bundled = load_bundled(sources, attack_types, None)
     by_source: dict[str, list[EvalSample]] = {}
     for s in bundled:
         by_source.setdefault(s.source, []).append(s)
     out: list[EvalSample] = []
-    for source, fallback in by_source.items():
+    for source, fallback in sorted(by_source.items()):
         try:
             out.extend(_load_full_source(source, max_samples))
         except Exception as e:  # noqa: BLE001
             print(f"[datasets] full load for '{source}' failed ({e.__class__.__name__}); using bundled sample.")
-            out.extend(fallback)
+            out.extend(fallback[:max_samples] if max_samples else fallback)
     return out
 
 
