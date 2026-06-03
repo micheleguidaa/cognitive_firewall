@@ -1,0 +1,20 @@
+# Secrets — never commit. The firewall reads keys from the environment only.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Eval artifacts
+results/
+
+# Misc
+*.log
+.DS_Store
+.streamlit/secrets.toml

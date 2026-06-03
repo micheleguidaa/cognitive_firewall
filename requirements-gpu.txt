@@ -1,0 +1,6 @@
+# Install ONLY on the H200 host to self-host gate / main / guard models.
+# Not needed for the offline heuristic demo, the tests, or CI.
+#
+#   pip install -r requirements-gpu.txt
+#   vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000   # OpenAI-compatible at /v1
+vllm>=0.6.0
