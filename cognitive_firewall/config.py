@@ -38,6 +38,7 @@ class FirewallConfig:
     veto_g1_score: float = 0.99
     veto_g1_categories: tuple = field(default_factory=lambda: (
         RiskCategory.WEAPONS,
+        RiskCategory.VIOLENCE,
         RiskCategory.CYBER_INTRUSION,
         RiskCategory.BIOTERROR,
         RiskCategory.CSAM,

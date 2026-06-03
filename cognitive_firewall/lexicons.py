@@ -38,6 +38,18 @@ _CATEGORY_TERMS: dict[RiskCategory, list[str]] = {
         "ammonium nitrate", "pipe bomb", "ghost gun", "3d printed gun", "napalm",
         "pressure cooker bomb", "molotov", "thermite", "shrapnel",
     ],
+    RiskCategory.VIOLENCE: [
+        # object-aware phrases so we catch homicide without flagging benign uses of
+        # "kill" (e.g. "kill a Python process", "kill weeds", "make a killing").
+        "murder", "homicide", "manslaughter", "assassinate", "assassination",
+        "strangle", "behead", "decapitate", "lynch", "kidnap", "kidnapping",
+        "kill a kid", "kill a child", "kill children", "kill a person", "kill a man",
+        "kill a woman", "kill a human", "kill humans", "kill someone", "kill people",
+        "kill him", "kill her", "kill them", "murder a kid", "murder a child",
+        "stab someone", "stab him", "stab her", "shoot someone", "shoot people",
+        "poison someone", "poison him", "poison her", "hurt a child", "harm a child",
+        "abuse a child", "torture someone", "beat someone to death",
+    ],
     RiskCategory.BIOTERROR: [
         "nerve agent", "sarin", "vx", "anthrax", "ricin", "bioweapon", "biological weapon",
         "chemical weapon", "botulinum", "mustard gas", "weaponized pathogen", "weaponize a virus",
@@ -74,7 +86,10 @@ _CATEGORY_TERMS: dict[RiskCategory, list[str]] = {
 
 _CATEGORY_REGEX: dict[RiskCategory, re.Pattern] = {cat: _alt(terms) for cat, terms in _CATEGORY_TERMS.items()}
 
-SEVERE: set[RiskCategory] = {RiskCategory.WEAPONS, RiskCategory.BIOTERROR, RiskCategory.CSAM, RiskCategory.SELF_HARM}
+SEVERE: set[RiskCategory] = {
+    RiskCategory.WEAPONS, RiskCategory.VIOLENCE, RiskCategory.BIOTERROR,
+    RiskCategory.CSAM, RiskCategory.SELF_HARM,
+}
 MODERATE: set[RiskCategory] = {RiskCategory.CYBER_INTRUSION, RiskCategory.FRAUD, RiskCategory.DRUGS, RiskCategory.PRIVACY}
 ESCALATABLE: set[RiskCategory] = {RiskCategory.CYBER_INTRUSION, RiskCategory.DRUGS}
 

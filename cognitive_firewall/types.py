@@ -48,6 +48,7 @@ class RiskCategory(str, Enum):
     """Harm categories used for evidence tagging and category-gated vetoes."""
 
     WEAPONS = "weapons"
+    VIOLENCE = "violence"           # interpersonal violence / homicide
     CYBER_INTRUSION = "cyber_intrusion"
     BIOTERROR = "bioterror"
     CSAM = "csam"

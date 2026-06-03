@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import streamlit as st
 
-from cognitive_firewall.config import FirewallConfig, make_provider
+from cognitive_firewall.config import FirewallConfig, api_key_from_env, make_provider
 from cognitive_firewall.firewall import CognitiveFirewall
 from cognitive_firewall.types import Decision
 
@@ -33,6 +33,9 @@ _GATE_LABEL_HELP = {
 def get_firewall(backend: str, dry_run: bool) -> CognitiveFirewall:
     cfg = FirewallConfig.from_env()
     cfg.backend = backend
+    # The default model is a local (vLLM) name; switch to an OpenAI model for the API.
+    if backend == "openai" and "gpt" not in (cfg.model or "").lower():
+        cfg.model = cfg.main_model = "gpt-4o-mini"
     cfg = replace(cfg, dry_run=dry_run)
     return CognitiveFirewall(cfg, provider=make_provider(cfg))
 
@@ -62,8 +65,10 @@ def main():
 
     with st.sidebar:
         st.header("Configuration")
-        backend = st.selectbox("Backend", ["heuristic", "auto", "local", "openai"], index=0,
-                               help="heuristic = offline (no key/GPU); local = vLLM; openai = API")
+        _backends = ["heuristic", "auto", "local", "openai"]
+        _default_idx = _backends.index("openai") if api_key_from_env() else 0
+        backend = st.selectbox("Backend", _backends, index=_default_idx,
+                               help="heuristic = offline (no key/GPU); local = vLLM; openai = gpt-4o-mini API")
         dry_run = st.toggle("Dry-run (observe-only)", value=False,
                             help="Compute the decision but never suppress output.")
         fw = get_firewall(backend, dry_run)
