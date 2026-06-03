@@ -102,6 +102,17 @@ and a prompt-injection set; `--full` attempts the real datasets from Hugging Fac
 - **Phase 2** ✅ real-model backend (vLLM/OpenAI), injection hardening, fail-modes
 - **Phase 3** ✅ evaluation harness (datasets, baselines, metrics, plots) — *paper core*
 - **Phase 4** ✅ FastAPI service + Streamlit UI
-- **Phase 5** ⏳ full H200 experiments: launch vLLM, `--backend local`, enable guard
-  baselines (Llama Guard 3 / ShieldGemma / OpenAI Moderation), full datasets,
-  weight/threshold sweeps → paper figures.
+- **Phase 5** 🔬 real-model run done (gates+main on `gpt-4o-mini`, LLM harm judge,
+  OpenAI Moderation guard baseline) — see `results/summary.md`. The firewall holds
+  0% ASR at **0% over-refusal** while the moderation filter over-refuses 12.5% of
+  benign prompts; full composite AUROC 1.0 vs output-moderation-only 0.58.
+  *Remaining for the definitive paper run:* a **jailbreakable** open main model on
+  the H200 (`--backend local`) + Llama Guard 3 baseline + `--full` datasets, to
+  de-saturate metrics and show the large ASR↓ headline.
+
+### Reproduce the real-model run
+```bash
+OPENAI_API_KEY=... python -m eval.run_eval --backend openai \
+  --model gpt-4o-mini --main-model gpt-4o-mini \
+  --judge llm --guards openai_moderation --parallel 8
+```
