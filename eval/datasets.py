@@ -8,6 +8,11 @@ real datasets from Hugging Face and falls back to the bundled sample on any erro
 Bundled samples emulate: AdvBench, HarmBench, StrongREJECT, JailbreakBench
 (harmful / jailbreak), XSTest + OR-Bench (benign over-refusal), Crescendo/MHJ
 (multi-turn), and a prompt-injection set.
+
+Multi-turn ``--full`` loaders upgrade the bundled conversation samples to real
+data: ``crescendo`` -> ``SafeMTData/SafeMTData`` (Attack_600, ActorAttack, open)
+and ``mhj`` -> ``ScaleAI/mhj`` (real human multi-turn jailbreaks; gated CC-BY-NC,
+so it gracefully falls back to the bundled sample without an access grant).
 """
 from __future__ import annotations
 
@@ -98,6 +103,56 @@ def _pick(ex: dict, keys) -> Optional[str]:
         if isinstance(v, str) and v.strip():
             return v.strip()
     return None
+
+
+def _turns_from_strings(strings) -> list:
+    """User-only turns from a list of attacker query strings (multi-turn attack).
+
+    The harness replays the conversation in one shot: the prior queries are the
+    escalating context and the firewall generates against the final turn, so the
+    attacker's own turns are all the signal G1/G4 need.
+    """
+    return [{"role": "user", "content": s.strip()}
+            for s in (strings or []) if isinstance(s, str) and s.strip()]
+
+
+def _mhj_turns(ex) -> list:
+    """Turn extraction for ``ScaleAI/mhj``.
+
+    The released file is a flat CSV, so each conversation's red-teamer turns are
+    wide ``message_0..message_N`` columns (empty cells past that row's length).
+    Also handles a list-of-messages column in case the schema is ever upgraded.
+    Returns ``[]`` (→ bundled fallback) if no turns are found.
+    """
+    for key in ("messages", "conversation", "conversations", "turns", "dialogue"):
+        v = ex.get(key)
+        if isinstance(v, list) and v:
+            turns = []
+            for t in v:
+                if isinstance(t, dict):
+                    role = str(t.get("role") or t.get("from") or "user").lower()
+                    role = "assistant" if role in ("assistant", "gpt", "bot", "model") else "user"
+                    content = t.get("content") or t.get("value") or t.get("text") or ""
+                    if str(content).strip():
+                        turns.append({"role": role, "content": str(content).strip()})
+                elif isinstance(t, str) and t.strip():
+                    turns.append({"role": "user", "content": t.strip()})
+            if turns:
+                return turns
+    for prefix in ("message_", "turn_", "prompt_"):  # wide CSV columns (red-teamer turns)
+        wide = [{"role": "user", "content": ex[f"{prefix}{i}"].strip()}
+                for i in range(_count_wide(ex, prefix))
+                if isinstance(ex.get(f"{prefix}{i}"), str) and ex[f"{prefix}{i}"].strip()]
+        if wide:
+            return wide
+    return []
+
+
+def _count_wide(ex, prefix) -> int:
+    n = 0
+    while f"{prefix}{n}" in ex:
+        n += 1
+    return n
 
 
 def _iter_dataset(repo, config, split, cap):
@@ -191,6 +246,21 @@ _FULL_SPECS: dict = {
          "label": "benign", "attack_type": "benign", "category": "none",
          "keep": lambda ex: not str(ex.get("input", "")).strip()},
     ],
+    # --- multi-turn (conversation) sources: build EvalSample.turns, not prompt ---
+    "crescendo": [
+        {"repo": "SafeMTData/SafeMTData", "config": "Attack_600", "split": "Attack_600",
+         "label": "harmful", "attack_type": "crescendo", "category": "unknown",
+         "cat_key": "category", "multiturn": True,
+         "turns_fn": lambda ex: _turns_from_strings(ex.get("multi_turn_queries"))},
+    ],
+    "mhj": [
+        # Gated (CC-BY-NC): needs an accepted HF access request + HF_TOKEN. Without
+        # one this raises and load() falls back to the bundled sample. Released as a
+        # flat CSV -> single `train` split, wide `message_N` turn columns.
+        {"repo": "ScaleAI/mhj", "split": "train", "label": "harmful",
+         "attack_type": "crescendo", "category": "unknown", "multiturn": True,
+         "turns_fn": _mhj_turns},
+    ],
 }
 
 
@@ -207,16 +277,21 @@ def _load_full_source(source: str, max_samples: Optional[int]) -> list[EvalSampl
             for ex in _rows(spec, cap * 8):  # over-scan so `keep` filters can still fill `cap`
                 if keep and not keep(ex):
                     continue
-                prompt = _pick(ex, spec["prompt"])
-                if not prompt:
-                    continue
                 cat = spec["category"]
                 if spec.get("cat_key") and ex.get(spec["cat_key"]):
                     cat = str(ex[spec["cat_key"]])
-                out.append(EvalSample(
-                    id=f"{source}-{len(out):04d}", label=spec["label"], category=cat,
-                    source=source, attack_type=spec["attack_type"], prompt=prompt,
-                ))
+                kw = {"id": f"{source}-{len(out):04d}", "label": spec["label"],
+                      "category": cat, "source": source, "attack_type": spec["attack_type"]}
+                if spec.get("multiturn"):
+                    turns = spec["turns_fn"](ex)
+                    if len(turns) < 2:  # need a conversation, not a lone turn
+                        continue
+                    out.append(EvalSample(turns=turns, **kw))
+                else:
+                    prompt = _pick(ex, spec["prompt"])
+                    if not prompt:
+                        continue
+                    out.append(EvalSample(prompt=prompt, **kw))
                 if len(out) >= cap:
                     break
             if out:
