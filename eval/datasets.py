@@ -117,42 +117,35 @@ def _turns_from_strings(strings) -> list:
 
 
 def _mhj_turns(ex) -> list:
-    """Turn extraction for ``ScaleAI/mhj``.
+    """Turns for one ``ScaleAI/mhj`` CSV row.
 
-    The released file is a flat CSV, so each conversation's red-teamer turns are
-    wide ``message_0..message_N`` columns (empty cells past that row's length).
-    Also handles a list-of-messages column in case the schema is ever upgraded.
-    Returns ``[]`` (→ bundled fallback) if no turns are found.
+    Each conversation is wide ``message_0..message_N`` columns; every non-empty
+    cell is a JSON object ``{"role": ..., "body": ...}``. In the release the first
+    cell is a generic system prompt and the rest are the red-teamer's user turns
+    (no assistant replies are recorded). We drop ``system`` boilerplate and keep
+    the ordered user/assistant turns, so the conversation ends on the final
+    jailbreak payload — exactly what the firewall should judge and answer.
     """
-    for key in ("messages", "conversation", "conversations", "turns", "dialogue"):
-        v = ex.get(key)
-        if isinstance(v, list) and v:
-            turns = []
-            for t in v:
-                if isinstance(t, dict):
-                    role = str(t.get("role") or t.get("from") or "user").lower()
-                    role = "assistant" if role in ("assistant", "gpt", "bot", "model") else "user"
-                    content = t.get("content") or t.get("value") or t.get("text") or ""
-                    if str(content).strip():
-                        turns.append({"role": role, "content": str(content).strip()})
-                elif isinstance(t, str) and t.strip():
-                    turns.append({"role": "user", "content": t.strip()})
-            if turns:
-                return turns
-    for prefix in ("message_", "turn_", "prompt_"):  # wide CSV columns (red-teamer turns)
-        wide = [{"role": "user", "content": ex[f"{prefix}{i}"].strip()}
-                for i in range(_count_wide(ex, prefix))
-                if isinstance(ex.get(f"{prefix}{i}"), str) and ex[f"{prefix}{i}"].strip()]
-        if wide:
-            return wide
-    return []
-
-
-def _count_wide(ex, prefix) -> int:
-    n = 0
-    while f"{prefix}{n}" in ex:
-        n += 1
-    return n
+    turns = []
+    i = 0
+    while f"message_{i}" in ex:
+        cell = ex.get(f"message_{i}")
+        i += 1
+        if not (isinstance(cell, str) and cell.strip()):
+            continue
+        role, body = "user", cell.strip()
+        try:
+            obj = json.loads(cell)
+            if isinstance(obj, dict):
+                role = str(obj.get("role") or "user").lower()
+                body = str(obj.get("body") or obj.get("content") or "").strip()
+        except (ValueError, TypeError):
+            pass
+        if not body or role == "system":
+            continue
+        turns.append({"role": "assistant" if role in ("assistant", "gpt", "bot", "model") else "user",
+                      "content": body})
+    return turns
 
 
 def _iter_dataset(repo, config, split, cap):
@@ -188,9 +181,30 @@ def _iter_csv_url(url, cap):
         yield row
 
 
+def _iter_hf_csv(repo, filename, cap):
+    """Yield up to ``cap`` rows from a CSV file inside a (possibly gated) HF dataset.
+
+    Bypasses ``datasets.load_dataset`` because some files — e.g. ScaleAI/mhj's
+    ragged 101-column CSV — defeat its Arrow schema inference. ``hf_hub_download``
+    reads the access token from the environment (HF_TOKEN), populated from .env.
+    """
+    import csv
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download(repo_id=repo, filename=filename, repo_type="dataset")
+    with open(path, encoding="utf-8", newline="") as fh:
+        for i, row in enumerate(csv.DictReader(fh)):
+            if i >= cap:
+                break
+            yield row
+
+
 def _rows(spec, cap):
-    if spec.get("kind") == "csv_url":
+    kind = spec.get("kind")
+    if kind == "csv_url":
         return _iter_csv_url(spec["url"], cap)
+    if kind == "hf_csv":
+        return _iter_hf_csv(spec["repo"], spec["filename"], cap)
     return _iter_dataset(spec["repo"], spec.get("config"), spec["split"], cap)
 
 
@@ -255,11 +269,12 @@ _FULL_SPECS: dict = {
     ],
     "mhj": [
         # Gated (CC-BY-NC): needs an accepted HF access request + HF_TOKEN. Without
-        # one this raises and load() falls back to the bundled sample. Released as a
-        # flat CSV -> single `train` split, wide `message_N` turn columns.
-        {"repo": "ScaleAI/mhj", "split": "train", "label": "harmful",
-         "attack_type": "crescendo", "category": "unknown", "multiturn": True,
-         "turns_fn": _mhj_turns},
+        # one this raises and load() falls back to the bundled sample. Read the raw
+        # CSV directly (its ragged 101-col `message_N` schema defeats datasets'
+        # Arrow loader); each cell is JSON {"role","body"} -> see _mhj_turns.
+        {"kind": "hf_csv", "repo": "ScaleAI/mhj", "filename": "harmbench_behaviors.csv",
+         "label": "harmful", "attack_type": "crescendo", "category": "unknown",
+         "multiturn": True, "turns_fn": _mhj_turns},
     ],
 }
 
