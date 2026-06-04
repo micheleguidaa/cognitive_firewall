@@ -1,7 +1,7 @@
 """Evaluation orchestrator.
 
     # Real models (gates+main on OpenAI, LLM judge, moderation guard)
-    OPENAI_API_KEY=... python -m eval.run_eval --backend openai \
+    CF_API_KEY=... python -m eval.run_eval --backend openai \
         --model gpt-4o-mini --main-model gpt-4o-mini \
         --judge llm --guards openai_moderation --parallel 8
 
@@ -16,7 +16,6 @@ import argparse
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
 
 from cognitive_firewall.config import FirewallConfig, make_provider
@@ -298,16 +297,15 @@ def main(argv=None) -> int:
         cfg.main_model = args.main_model
     if args.base_url:
         cfg.base_url = args.base_url
+    if args.main_backend:
+        cfg.main_backend = args.main_backend
+    if args.main_base_url:
+        cfg.main_base_url = args.main_base_url
     cfg.dry_run = True  # scoring pass: full pipeline, no enforcement, output passed through
 
     provider = make_provider(cfg)
-    main_provider = None
-    if args.main_backend:
-        mm = args.main_model or cfg.model
-        mcfg = replace(cfg, backend=args.main_backend, base_url=args.main_base_url or cfg.base_url,
-                       model=mm, main_model=mm)
-        main_provider = make_provider(mcfg)
-    fw = CognitiveFirewall(cfg, provider=provider, main_provider=main_provider)
+    # The firewall builds the governed main provider from cfg.main_* (mirrors oversight if unset).
+    fw = CognitiveFirewall(cfg, provider=provider)
     judge = LLMJudge(provider)
     guards = [_GUARD_REGISTRY[n](provider) for n in args.guards]
 

@@ -11,6 +11,7 @@ Pipeline per request/turn:
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from time import perf_counter
 from typing import Callable, Optional, Union
 
@@ -52,7 +53,19 @@ class CognitiveFirewall:
         # gate/judge provider (the oversight) vs the governed main-LLM provider.
         # They can differ, e.g. strong gates on an API + a jailbreakable local main.
         self.provider = provider if provider is not None else make_provider(self.cfg)
-        self.main_provider = main_provider if main_provider is not None else self.provider
+        # The governed main LLM mirrors the oversight provider unless a main_provider is
+        # passed or any CF_MAIN_* override is set (then build one, inheriting unset fields).
+        if main_provider is not None:
+            self.main_provider = main_provider
+        elif self.cfg.main_backend or self.cfg.main_base_url or self.cfg.main_model:
+            self.main_provider = make_provider(replace(
+                self.cfg,
+                backend=self.cfg.main_backend or self.cfg.backend,
+                base_url=self.cfg.main_base_url or self.cfg.base_url,
+                model=self.cfg.main_model or self.cfg.model,
+            ))
+        else:
+            self.main_provider = self.provider
         self.mode_label = (
             self.provider.mode_name
             if self.main_provider is self.provider

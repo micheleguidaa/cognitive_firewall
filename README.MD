@@ -73,7 +73,7 @@ export CF_BACKEND=openai CF_API_KEY=sk-...   # read from env ONLY; never written
 pytest -q
 
 # 2) Evaluation harness — writes results/ (CSV, metrics.json, summary.md, plots)
-OPENAI_API_KEY=... python -m eval.run_eval --backend openai --model gpt-4o-mini
+CF_API_KEY=... python -m eval.run_eval --backend openai --model gpt-4o-mini
 python -m eval.run_eval --backend local --datasets advbench xstest --max-samples 10
 
 # 3) FastAPI service
@@ -114,7 +114,7 @@ and a prompt-injection set; `--full` attempts the real datasets from Hugging Fac
 
 ### Reproduce the real-model run
 ```bash
-OPENAI_API_KEY=... python -m eval.run_eval --backend openai \
+CF_API_KEY=... python -m eval.run_eval --backend openai \
   --model gpt-4o-mini --main-model gpt-4o-mini \
   --judge llm --guards openai_moderation --parallel 8
 ```

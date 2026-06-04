@@ -55,7 +55,11 @@ class FirewallConfig:
     backend: str = "auto"                    # "auto" | "local" | "openai"
     base_url: str = "http://localhost:8000/v1"   # local vLLM OpenAI-compatible endpoint
     model: str = "Qwen2.5-7B-Instruct"       # gate-judge model
-    main_model: Optional[str] = None         # governed main LLM (defaults to `model`)
+    # Governed main LLM. Each mirrors its oversight counterpart above when unset, so a
+    # single-provider setup needs none of these; set only what differs for a split setup.
+    main_backend: Optional[str] = None       # defaults to `backend`
+    main_base_url: Optional[str] = None      # defaults to `base_url`
+    main_model: Optional[str] = None         # defaults to `model`
 
     request_timeout_s: float = 30.0
     gate_timeout_s: float = 20.0
@@ -90,6 +94,9 @@ class FirewallConfig:
         cfg.backend = os.environ.get("CF_BACKEND", cfg.backend)
         cfg.base_url = os.environ.get("CF_BASE_URL", cfg.base_url)
         cfg.model = os.environ.get("CF_MODEL", cfg.model)
+        # Governed main LLM: each CF_MAIN_* overrides its CF_* counterpart; unset -> mirror oversight.
+        cfg.main_backend = os.environ.get("CF_MAIN_BACKEND", cfg.main_backend)
+        cfg.main_base_url = os.environ.get("CF_MAIN_BASE_URL", cfg.main_base_url)
         cfg.main_model = os.environ.get("CF_MAIN_MODEL", cfg.main_model)
         cfg.fail_mode = os.environ.get("CF_FAIL_MODE", cfg.fail_mode)
         cfg.dry_run = _env_bool("CF_DRY_RUN", cfg.dry_run)
@@ -97,12 +104,9 @@ class FirewallConfig:
 
 
 def api_key_from_env() -> Optional[str]:
-    """Return the API key from the environment, or None. Never logged or stored."""
-    for name in ("CF_API_KEY", "OPENAI_API_KEY"):
-        v = os.environ.get(name)
-        if v and v.strip():
-            return v.strip()
-    return None
+    """Return CF_API_KEY from the environment, or None. Never logged or stored."""
+    v = os.environ.get("CF_API_KEY")
+    return v.strip() if v and v.strip() else None
 
 
 def make_provider(cfg: FirewallConfig):

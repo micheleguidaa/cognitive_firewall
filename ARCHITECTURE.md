@@ -206,7 +206,7 @@ JSON extraction.
 | `local`  | local vLLM at `CF_BASE_URL` |
 | `auto` (default) | reachable local vLLM → API key → **error** if neither |
 
-API keys are read from the environment only (`CF_API_KEY` / `OPENAI_API_KEY`) and
+API keys are read from the environment only (`CF_API_KEY`) and
 never written to disk, logs, or responses.
 
 > Tests run fully offline by injecting a scripted `FakeLLMProvider` (`tests/fakes.py`)
