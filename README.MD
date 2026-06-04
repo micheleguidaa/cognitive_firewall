@@ -104,7 +104,10 @@ and a prompt-injection set; `--full` attempts the real datasets from Hugging Fac
   benign prompts; full composite AUROC 1.0 vs output-moderation-only 0.58.
   Real `--full` HF loaders are now live (AdvBench/HarmBench/StrongREJECT via their
   public CSVs; JailbreakBench/XSTest/OR-Bench/prompt-injections/Alpaca via HF — all
-  unauthenticated; Crescendo/MHJ stay bundled, no clean public multi-turn source).
+  unauthenticated; **Crescendo** upgrades to real multi-turn conversations via
+  `SafeMTData/SafeMTData` (Attack_600 / ActorAttack), and **MHJ** to `ScaleAI/mhj`
+  (gated CC-BY-NC — request access + set an HF token, else it falls back to the
+  bundled sample)).
   *Remaining for the definitive paper run:* a **jailbreakable** open main model on
   the H200 (`--backend local`) + the Llama Guard 3 baseline, to de-saturate the
   metrics and show the large ASR↓ headline.
